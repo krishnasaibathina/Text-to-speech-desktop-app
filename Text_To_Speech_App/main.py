@@ -6,6 +6,7 @@ import os
 import sys
 import subprocess
 import re
+import time
 
 
 class TextToSpeechApp:
@@ -19,87 +20,82 @@ class TextToSpeechApp:
         self.root = root
 
         self.root.title(
-            "Text-to-Speech Desktop App"
+            "VocalDesk - Text to Speech"
         )
 
         self.root.geometry(
-            "1000x720"
+            "1100x760"
         )
 
         self.root.minsize(
-            850,
-            650
+            900,
+            680
         )
 
         self.root.configure(
-            bg="#f4f6f8"
+            bg="#0f172a"
         )
 
         # =====================================================
         # COLORS
         # =====================================================
 
-        self.BG = "#f4f6f8"
-        self.CARD = "#ffffff"
-        self.TEXT = "#111827"
-        self.SECONDARY = "#6b7280"
-        self.BORDER = "#e5e7eb"
+        self.BG = "#0f172a"
+        self.SIDEBAR = "#111c33"
+        self.CARD = "#17233a"
+        self.CARD_2 = "#1d2a43"
 
-        self.BLUE = "#2563eb"
-        self.BLUE_HOVER = "#1d4ed8"
+        self.WHITE = "#f8fafc"
+        self.TEXT = "#e2e8f0"
+        self.MUTED = "#94a3b8"
 
-        self.GREEN = "#16a34a"
-        self.GREEN_HOVER = "#15803d"
+        self.BLUE = "#3b82f6"
+        self.BLUE_HOVER = "#2563eb"
+
+        self.GREEN = "#22c55e"
+        self.GREEN_HOVER = "#16a34a"
 
         self.ORANGE = "#f59e0b"
         self.ORANGE_HOVER = "#d97706"
 
-        self.RED = "#dc2626"
-        self.RED_HOVER = "#b91c1c"
+        self.RED = "#ef4444"
+        self.RED_HOVER = "#dc2626"
 
-        self.PURPLE = "#7c3aed"
-        self.PURPLE_HOVER = "#6d28d9"
+        self.PURPLE = "#8b5cf6"
+        self.PURPLE_HOVER = "#7c3aed"
 
-        self.GRAY = "#64748b"
-        self.GRAY_HOVER = "#475569"
-
-        # =====================================================
-        # SPEECH ENGINE
-        # =====================================================
-
-        try:
-
-            self.engine = pyttsx3.init()
-
-        except Exception as error:
-
-            messagebox.showerror(
-                "Speech Engine Error",
-                "Unable to start the speech engine.\n\n"
-                + str(error)
-            )
-
-            self.root.destroy()
-            return
+        self.BORDER = "#263650"
 
         # =====================================================
-        # STATE
+        # SPEECH STATE
+        # =====================================================
+
+        self.current_engine = None
+
+        self.speech_thread = None
+
+        self.engine_lock = threading.Lock()
+
+        self.stop_requested = False
+        self.pause_requested = False
+
+        self.is_speaking = False
+        self.is_paused = False
+
+        self.current_text = ""
+
+        self.sentences = []
+
+        self.current_sentence_index = 0
+
+        # =====================================================
+        # VOICES
         # =====================================================
 
         self.voices = []
 
-        self.is_speaking = False
-        self.is_paused = False
-        self.stop_requested = False
-
-        self.current_text = ""
-
-        self.current_sentence_index = 0
-
-        self.sentences = []
-
         # =====================================================
-        # OUTPUT FOLDER
+        # OUTPUT
         # =====================================================
 
         self.output_folder = os.path.join(
@@ -128,11 +124,11 @@ class TextToSpeechApp:
 
         self.voice_var = tk.StringVar()
 
-        self.speed_text_var = tk.StringVar(
-            value="170"
+        self.speed_text = tk.StringVar(
+            value="170 WPM"
         )
 
-        self.volume_text_var = tk.StringVar(
+        self.volume_text = tk.StringVar(
             value="100%"
         )
 
@@ -140,8 +136,16 @@ class TextToSpeechApp:
             value="Ready"
         )
 
-        self.count_var = tk.StringVar(
-            value="0 characters | 0 words"
+        self.counter_var = tk.StringVar(
+            value="0 characters  •  0 words"
+        )
+
+        self.progress_var = tk.DoubleVar(
+            value=0
+        )
+
+        self.progress_text = tk.StringVar(
+            value="Ready to speak"
         )
 
         # =====================================================
@@ -157,13 +161,13 @@ class TextToSpeechApp:
         self.create_gui()
 
         # =====================================================
-        # LOAD VOICES
+        # LOAD SYSTEM VOICES
         # =====================================================
 
         self.load_voices()
 
         # =====================================================
-        # WINDOW CLOSE
+        # CLOSE EVENT
         # =====================================================
 
         self.root.protocol(
@@ -180,136 +184,254 @@ class TextToSpeechApp:
         style = ttk.Style()
 
         try:
-            style.theme_use("clam")
-
+            style.theme_use(
+                "clam"
+            )
         except tk.TclError:
             pass
 
         style.configure(
-            "TCombobox",
-            padding=8,
-            font=("Segoe UI", 10)
+            "Modern.TCombobox",
+            fieldbackground="#0f1a2d",
+            background="#0f1a2d",
+            foreground=self.TEXT,
+            arrowcolor=self.MUTED,
+            bordercolor=self.BORDER,
+            lightcolor=self.BORDER,
+            darkcolor=self.BORDER,
+            padding=8
+        )
+
+        style.map(
+            "Modern.TCombobox",
+            fieldbackground=[
+                ("readonly", "#0f1a2d")
+            ],
+            foreground=[
+                ("readonly", self.TEXT)
+            ]
         )
 
         style.configure(
-            "Horizontal.TProgressbar",
-            thickness=6
+            "Modern.Horizontal.TProgressbar",
+            troughcolor="#0f1a2d",
+            background=self.BLUE,
+            bordercolor="#0f1a2d",
+            lightcolor=self.BLUE,
+            darkcolor=self.BLUE,
+            thickness=7
         )
 
     # =========================================================
-    # CREATE GUI
+    # GUI
     # =========================================================
 
     def create_gui(self):
 
         # =====================================================
-        # HEADER
+        # TOP BAR
         # =====================================================
 
-        header = tk.Frame(
+        top = tk.Frame(
+            self.root,
+            bg=self.SIDEBAR,
+            height=78
+        )
+
+        top.pack(
+            fill="x"
+        )
+
+        top.pack_propagate(
+            False
+        )
+
+        # Logo
+        logo_frame = tk.Frame(
+            top,
+            bg=self.SIDEBAR
+        )
+
+        logo_frame.pack(
+            side="left",
+            padx=30
+        )
+
+        logo = tk.Label(
+            logo_frame,
+            text="V",
+            font=(
+                "Segoe UI",
+                22,
+                "bold"
+            ),
+            bg=self.BLUE,
+            fg="white",
+            width=2,
+            height=1
+        )
+
+        logo.pack(
+            side="left",
+            padx=(0, 12)
+        )
+
+        title_frame = tk.Frame(
+            logo_frame,
+            bg=self.SIDEBAR
+        )
+
+        title_frame.pack(
+            side="left"
+        )
+
+        tk.Label(
+            title_frame,
+            text="VocalDesk",
+            font=(
+                "Segoe UI",
+                17,
+                "bold"
+            ),
+            bg=self.SIDEBAR,
+            fg=self.WHITE
+        ).pack(
+            anchor="w"
+        )
+
+        tk.Label(
+            title_frame,
+            text="TEXT TO SPEECH",
+            font=(
+                "Segoe UI",
+                8,
+                "bold"
+            ),
+            bg=self.SIDEBAR,
+            fg=self.MUTED
+        ).pack(
+            anchor="w"
+        )
+
+        # Right side
+        tk.Label(
+            top,
+            text="OFFLINE SPEECH ENGINE",
+            font=(
+                "Segoe UI",
+                9,
+                "bold"
+            ),
+            bg=self.SIDEBAR,
+            fg=self.GREEN
+        ).pack(
+            side="right",
+            padx=30
+        )
+
+        # =====================================================
+        # MAIN
+        # =====================================================
+
+        main = tk.Frame(
             self.root,
             bg=self.BG
         )
 
-        header.pack(
-            fill="x",
+        main.pack(
+            fill="both",
+            expand=True,
             padx=30,
-            pady=(20, 8)
+            pady=25
         )
 
-        title = tk.Label(
-            header,
-            text="Text-to-Speech",
+        # =====================================================
+        # PAGE TITLE
+        # =====================================================
+
+        tk.Label(
+            main,
+            text="Create spoken audio",
             font=(
                 "Segoe UI",
-                27,
+                25,
                 "bold"
             ),
             bg=self.BG,
-            fg=self.TEXT
-        )
-
-        title.pack(
+            fg=self.WHITE
+        ).pack(
             anchor="w"
         )
 
-        subtitle = tk.Label(
-            header,
-            text="Convert typed text into spoken audio",
+        tk.Label(
+            main,
+            text="Type your text, customize the voice, and listen instantly.",
             font=(
                 "Segoe UI",
-                11
+                10
             ),
             bg=self.BG,
-            fg=self.SECONDARY
-        )
-
-        subtitle.pack(
+            fg=self.MUTED
+        ).pack(
             anchor="w",
-            pady=(2, 0)
+            pady=(4, 18)
         )
 
         # =====================================================
-        # MAIN CARD
+        # EDITOR CARD
         # =====================================================
 
-        card = tk.Frame(
-            self.root,
+        editor = tk.Frame(
+            main,
             bg=self.CARD,
             highlightbackground=self.BORDER,
             highlightthickness=1
         )
 
-        card.pack(
+        editor.pack(
             fill="both",
-            expand=True,
-            padx=30,
-            pady=12
+            expand=True
         )
 
         # =====================================================
-        # TEXT HEADER
+        # EDITOR HEADER
         # =====================================================
 
-        text_header = tk.Frame(
-            card,
+        editor_header = tk.Frame(
+            editor,
             bg=self.CARD
         )
 
-        text_header.pack(
+        editor_header.pack(
             fill="x",
             padx=22,
-            pady=(18, 7)
+            pady=(18, 10)
         )
 
-        text_title = tk.Label(
-            text_header,
-            text="Enter Text",
+        tk.Label(
+            editor_header,
+            text="Your text",
             font=(
                 "Segoe UI",
-                14,
+                12,
                 "bold"
             ),
             bg=self.CARD,
-            fg=self.TEXT
-        )
-
-        text_title.pack(
+            fg=self.WHITE
+        ).pack(
             side="left"
         )
 
-        count_label = tk.Label(
-            text_header,
-            textvariable=self.count_var,
+        tk.Label(
+            editor_header,
+            textvariable=self.counter_var,
             font=(
                 "Segoe UI",
                 9
             ),
             bg=self.CARD,
-            fg=self.SECONDARY
-        )
-
-        count_label.pack(
+            fg=self.MUTED
+        ).pack(
             side="right"
         )
 
@@ -317,31 +439,36 @@ class TextToSpeechApp:
         # TEXT AREA
         # =====================================================
 
-        text_frame = tk.Frame(
-            card,
-            bg=self.CARD
+        text_container = tk.Frame(
+            editor,
+            bg="#0d1729",
+            highlightbackground=self.BORDER,
+            highlightthickness=1
         )
 
-        text_frame.pack(
-            fill="x",
+        text_container.pack(
+            fill="both",
+            expand=True,
             padx=22
         )
 
         self.text_box = tk.Text(
-            text_frame,
+            text_container,
             height=12,
             wrap="word",
             font=(
                 "Segoe UI",
                 12
             ),
-            bg="#fafafa",
-            fg=self.TEXT,
-            insertbackground=self.TEXT,
+            bg="#0d1729",
+            fg="#e5edf8",
+            insertbackground="#ffffff",
+            selectbackground="#2563eb",
+            selectforeground="#ffffff",
             relief="flat",
             bd=0,
-            padx=15,
-            pady=12,
+            padx=18,
+            pady=15,
             undo=True
         )
 
@@ -351,10 +478,14 @@ class TextToSpeechApp:
             expand=True
         )
 
-        scrollbar = ttk.Scrollbar(
-            text_frame,
+        scrollbar = tk.Scrollbar(
+            text_container,
             orient="vertical",
-            command=self.text_box.yview
+            command=self.text_box.yview,
+            bg="#1e293b",
+            troughcolor="#0d1729",
+            activebackground="#3b82f6",
+            width=12
         )
 
         scrollbar.pack(
@@ -368,149 +499,191 @@ class TextToSpeechApp:
 
         self.text_box.bind(
             "<KeyRelease>",
-            self.update_count
+            self.update_counter
         )
 
         # =====================================================
-        # SETTINGS AREA
+        # SETTINGS
         # =====================================================
 
         settings = tk.Frame(
-            card,
+            editor,
             bg=self.CARD
         )
 
         settings.pack(
             fill="x",
             padx=22,
-            pady=(15, 8)
+            pady=16
         )
 
         # -----------------------------------------------------
         # VOICE
         # -----------------------------------------------------
 
-        voice_label = tk.Label(
+        voice_box = tk.Frame(
             settings,
-            text="Voice",
+            bg=self.CARD
+        )
+
+        voice_box.pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(0, 20)
+        )
+
+        tk.Label(
+            voice_box,
+            text="VOICE",
             font=(
                 "Segoe UI",
-                10,
+                8,
                 "bold"
             ),
             bg=self.CARD,
-            fg=self.TEXT
-        )
-
-        voice_label.grid(
-            row=0,
-            column=0,
-            sticky="w",
-            padx=(0, 8)
+            fg=self.MUTED
+        ).pack(
+            anchor="w"
         )
 
         self.voice_combo = ttk.Combobox(
-            settings,
+            voice_box,
             textvariable=self.voice_var,
             state="readonly",
-            width=28
+            style="Modern.TCombobox"
         )
 
-        self.voice_combo.grid(
-            row=0,
-            column=1,
-            sticky="ew",
-            padx=(0, 20)
+        self.voice_combo.pack(
+            fill="x",
+            pady=(5, 0)
         )
 
         # -----------------------------------------------------
         # SPEED
         # -----------------------------------------------------
 
-        speed_label = tk.Label(
+        speed_box = tk.Frame(
             settings,
-            text="Speed",
+            bg=self.CARD,
+            width=230
+        )
+
+        speed_box.pack(
+            side="left",
+            padx=(0, 20)
+        )
+
+        speed_header = tk.Frame(
+            speed_box,
+            bg=self.CARD
+        )
+
+        speed_header.pack(
+            fill="x"
+        )
+
+        tk.Label(
+            speed_header,
+            text="SPEED",
             font=(
                 "Segoe UI",
-                10,
+                8,
                 "bold"
             ),
             bg=self.CARD,
-            fg=self.TEXT
+            fg=self.MUTED
+        ).pack(
+            side="left"
         )
 
-        speed_label.grid(
-            row=0,
-            column=2,
-            sticky="w"
+        tk.Label(
+            speed_header,
+            textvariable=self.speed_text,
+            font=(
+                "Segoe UI",
+                8,
+                "bold"
+            ),
+            bg=self.CARD,
+            fg=self.BLUE
+        ).pack(
+            side="right"
         )
 
         self.speed_scale = tk.Scale(
-            settings,
+            speed_box,
             from_=50,
             to=300,
             orient="horizontal",
             variable=self.speed_var,
             showvalue=False,
             bg=self.CARD,
-            fg=self.TEXT,
-            highlightthickness=0,
-            troughcolor="#dbeafe",
+            fg=self.WHITE,
+            troughcolor="#263650",
             activebackground=self.BLUE,
-            width=10,
-            length=150,
+            highlightthickness=0,
+            bd=0,
+            width=8,
+            length=210,
             command=self.speed_changed
         )
 
-        self.speed_scale.grid(
-            row=0,
-            column=3,
-            padx=(5, 5)
-        )
-
-        speed_value = tk.Label(
-            settings,
-            textvariable=self.speed_text_var,
-            font=(
-                "Segoe UI",
-                9,
-                "bold"
-            ),
-            bg=self.CARD,
-            fg=self.BLUE,
-            width=4
-        )
-
-        speed_value.grid(
-            row=0,
-            column=4,
-            padx=(0, 18)
-        )
+        self.speed_scale.pack()
 
         # -----------------------------------------------------
         # VOLUME
         # -----------------------------------------------------
 
-        volume_label = tk.Label(
+        volume_box = tk.Frame(
             settings,
-            text="Volume",
+            bg=self.CARD,
+            width=190
+        )
+
+        volume_box.pack(
+            side="left"
+        )
+
+        volume_header = tk.Frame(
+            volume_box,
+            bg=self.CARD
+        )
+
+        volume_header.pack(
+            fill="x"
+        )
+
+        tk.Label(
+            volume_header,
+            text="VOLUME",
             font=(
                 "Segoe UI",
-                10,
+                8,
                 "bold"
             ),
             bg=self.CARD,
-            fg=self.TEXT
+            fg=self.MUTED
+        ).pack(
+            side="left"
         )
 
-        volume_label.grid(
-            row=0,
-            column=5,
-            sticky="w"
+        tk.Label(
+            volume_header,
+            textvariable=self.volume_text,
+            font=(
+                "Segoe UI",
+                8,
+                "bold"
+            ),
+            bg=self.CARD,
+            fg=self.GREEN
+        ).pack(
+            side="right"
         )
 
         self.volume_scale = tk.Scale(
-            settings,
+            volume_box,
             from_=0,
             to=1,
             resolution=0.1,
@@ -518,198 +691,226 @@ class TextToSpeechApp:
             variable=self.volume_var,
             showvalue=False,
             bg=self.CARD,
-            fg=self.TEXT,
-            highlightthickness=0,
-            troughcolor="#dcfce7",
+            fg=self.WHITE,
+            troughcolor="#263650",
             activebackground=self.GREEN,
-            width=10,
-            length=130,
+            highlightthickness=0,
+            bd=0,
+            width=8,
+            length=170,
             command=self.volume_changed
         )
 
-        self.volume_scale.grid(
-            row=0,
-            column=6,
-            padx=(5, 5)
-        )
-
-        volume_value = tk.Label(
-            settings,
-            textvariable=self.volume_text_var,
-            font=(
-                "Segoe UI",
-                9,
-                "bold"
-            ),
-            bg=self.CARD,
-            fg=self.GREEN,
-            width=5
-        )
-
-        volume_value.grid(
-            row=0,
-            column=7
-        )
-
-        settings.columnconfigure(
-            1,
-            weight=1
-        )
+        self.volume_scale.pack()
 
         # =====================================================
-        # BUTTONS
+        # PROGRESS
         # =====================================================
 
-        button_frame = tk.Frame(
-            card,
+        progress_frame = tk.Frame(
+            editor,
             bg=self.CARD
         )
 
-        button_frame.pack(
+        progress_frame.pack(
+            fill="x",
+            padx=22
+        )
+
+        progress_header = tk.Frame(
+            progress_frame,
+            bg=self.CARD
+        )
+
+        progress_header.pack(
+            fill="x"
+        )
+
+        tk.Label(
+            progress_header,
+            textvariable=self.progress_text,
+            font=(
+                "Segoe UI",
+                9
+            ),
+            bg=self.CARD,
+            fg=self.MUTED
+        ).pack(
+            side="left"
+        )
+
+        self.progress = ttk.Progressbar(
+            progress_frame,
+            style="Modern.Horizontal.TProgressbar",
+            variable=self.progress_var,
+            maximum=100
+        )
+
+        self.progress.pack(
+            fill="x",
+            pady=(6, 16)
+        )
+
+        # =====================================================
+        # CONTROLS
+        # =====================================================
+
+        controls = tk.Frame(
+            editor,
+            bg=self.CARD
+        )
+
+        controls.pack(
             fill="x",
             padx=22,
-            pady=(5, 18)
+            pady=(0, 20)
         )
 
         # Play
-        self.play_button = self.create_button(
-            button_frame,
+        self.play_button = self.make_button(
+            controls,
             "▶  Play",
             self.play_text,
             self.BLUE,
-            self.BLUE_HOVER
+            self.BLUE_HOVER,
+            width=12
         )
 
         self.play_button.pack(
             side="left",
-            padx=(0, 6)
+            padx=(0, 8)
         )
 
-        # Pause
-        self.pause_button = self.create_button(
-            button_frame,
-            "⏸  Pause",
-            self.pause_speech,
+        # PAUSE / RESUME - ONE BUTTON
+        self.pause_resume_button = self.make_button(
+            controls,
+            "Ⅱ  Pause",
+            self.pause_or_resume,
             self.ORANGE,
-            self.ORANGE_HOVER
+            self.ORANGE_HOVER,
+            width=13
         )
 
-        self.pause_button.pack(
+        self.pause_resume_button.pack(
             side="left",
-            padx=6
+            padx=8
         )
 
-        # Resume
-        self.resume_button = self.create_button(
-            button_frame,
-            "▶  Resume",
-            self.resume_speech,
-            self.GREEN,
-            self.GREEN_HOVER
-        )
-
-        self.resume_button.pack(
-            side="left",
-            padx=6
-        )
-
-        # Stop
-        self.stop_button = self.create_button(
-            button_frame,
-            "⏹  Stop",
+        # STOP
+        self.stop_button = self.make_button(
+            controls,
+            "■  Stop",
             self.stop_speech,
             self.RED,
-            self.RED_HOVER
+            self.RED_HOVER,
+            width=11
         )
 
         self.stop_button.pack(
             side="left",
-            padx=6
+            padx=8
         )
 
-        # Save
-        self.save_button = self.create_button(
-            button_frame,
-            "💾  Save Audio",
+        # SAVE
+        self.save_button = self.make_button(
+            controls,
+            "↓  Save Audio",
             self.save_audio,
             self.PURPLE,
-            self.PURPLE_HOVER
+            self.PURPLE_HOVER,
+            width=15
         )
 
         self.save_button.pack(
             side="left",
-            padx=6
+            padx=8
         )
 
-        # Clear
-        self.clear_button = self.create_button(
-            button_frame,
+        # CLEAR
+        self.make_button(
+            controls,
             "Clear",
             self.clear_text,
-            self.GRAY,
-            self.GRAY_HOVER
-        )
-
-        self.clear_button.pack(
+            "#334155",
+            "#475569",
+            width=9
+        ).pack(
             side="left",
-            padx=6
+            padx=8
         )
 
-        # Output folder
-        self.folder_button = self.create_button(
-            button_frame,
+        # OUTPUT
+        self.make_button(
+            controls,
             "Output Folder",
             self.open_output_folder,
             "#334155",
-            "#1e293b"
-        )
-
-        self.folder_button.pack(
+            "#475569",
+            width=14
+        ).pack(
             side="right"
         )
 
         # =====================================================
-        # STATUS BAR
+        # BOTTOM STATUS
         # =====================================================
 
-        status_frame = tk.Frame(
+        bottom = tk.Frame(
             self.root,
             bg=self.BG
         )
 
-        status_frame.pack(
+        bottom.pack(
             fill="x",
             padx=30,
-            pady=(0, 12)
+            pady=(0, 15)
         )
 
-        status_label = tk.Label(
-            status_frame,
+        status_left = tk.Frame(
+            bottom,
+            bg=self.BG
+        )
+
+        status_left.pack(
+            side="left"
+        )
+
+        status_dot = tk.Label(
+            status_left,
+            text="●",
+            font=("Segoe UI", 9),
+            bg=self.BG,
+            fg=self.GREEN
+        )
+
+        status_dot.pack(
+            side="left",
+            padx=(0, 6)
+        )
+
+        tk.Label(
+            status_left,
             textvariable=self.status_var,
             font=(
                 "Segoe UI",
                 9
             ),
             bg=self.BG,
-            fg=self.SECONDARY
-        )
-
-        status_label.pack(
+            fg=self.MUTED
+        ).pack(
             side="left"
         )
 
-        technology_label = tk.Label(
-            status_frame,
+        tk.Label(
+            bottom,
             text="Python  •  Tkinter  •  pyttsx3",
             font=(
                 "Segoe UI",
                 9
             ),
             bg=self.BG,
-            fg=self.SECONDARY
-        )
-
-        technology_label.pack(
+            fg="#64748b"
+        ).pack(
             side="right"
         )
 
@@ -717,19 +918,21 @@ class TextToSpeechApp:
     # BUTTON CREATOR
     # =========================================================
 
-    def create_button(
+    def make_button(
         self,
         parent,
         text,
         command,
         color,
-        hover_color
+        hover,
+        width=12
     ):
 
         button = tk.Button(
             parent,
             text=text,
             command=command,
+            width=width,
             font=(
                 "Segoe UI",
                 9,
@@ -737,19 +940,19 @@ class TextToSpeechApp:
             ),
             bg=color,
             fg="white",
-            activebackground=hover_color,
+            activebackground=hover,
             activeforeground="white",
             relief="flat",
             bd=0,
-            padx=12,
-            pady=8,
+            padx=8,
+            pady=9,
             cursor="hand2"
         )
 
         button.bind(
             "<Enter>",
             lambda event: button.configure(
-                bg=hover_color
+                bg=hover
             )
         )
 
@@ -770,11 +973,20 @@ class TextToSpeechApp:
 
         try:
 
-            self.voices = self.engine.getProperty(
-                "voices"
+            temp_engine = pyttsx3.init()
+
+            self.voices = (
+                temp_engine.getProperty(
+                    "voices"
+                )
             )
 
-            voice_names = []
+            try:
+                temp_engine.stop()
+            except Exception:
+                pass
+
+            names = []
 
             for index, voice in enumerate(
                 self.voices
@@ -787,22 +999,24 @@ class TextToSpeechApp:
                 )
 
                 if not name:
-                    name = f"Voice {index + 1}"
+                    name = (
+                        f"Voice {index + 1}"
+                    )
 
-                voice_names.append(
+                names.append(
                     name
                 )
 
-            self.voice_combo["values"] = (
-                voice_names
-            )
+            self.voice_combo["values"] = names
 
-            if voice_names:
+            if names:
 
-                self.voice_combo.current(0)
+                self.voice_combo.current(
+                    0
+                )
 
                 self.update_status(
-                    f"{len(voice_names)} voice(s) available"
+                    f"{len(names)} system voice(s) available"
                 )
 
             else:
@@ -815,7 +1029,7 @@ class TextToSpeechApp:
 
             messagebox.showerror(
                 "Voice Error",
-                "Could not load voices.\n\n"
+                "Could not load system voices.\n\n"
                 + str(error)
             )
 
@@ -823,30 +1037,58 @@ class TextToSpeechApp:
     # SPEED
     # =========================================================
 
-    def speed_changed(self, value):
+    def speed_changed(
+        self,
+        value
+    ):
 
         speed = int(
             float(value)
         )
 
-        self.speed_text_var.set(
-            str(speed)
+        self.speed_text.set(
+            f"{speed} WPM"
         )
 
     # =========================================================
     # VOLUME
     # =========================================================
 
-    def volume_changed(self, value):
+    def volume_changed(
+        self,
+        value
+    ):
 
-        volume = float(value)
-
-        percentage = int(
-            volume * 100
+        volume = float(
+            value
         )
 
-        self.volume_text_var.set(
-            f"{percentage}%"
+        self.volume_text.set(
+            f"{int(volume * 100)}%"
+        )
+
+    # =========================================================
+    # COUNTER
+    # =========================================================
+
+    def update_counter(
+        self,
+        event=None
+    ):
+
+        text = self.get_text()
+
+        characters = len(
+            text
+        )
+
+        words = len(
+            text.split()
+        )
+
+        self.counter_var.set(
+            f"{characters} characters  •  "
+            f"{words} words"
         )
 
     # =========================================================
@@ -861,10 +1103,13 @@ class TextToSpeechApp:
         ).strip()
 
     # =========================================================
-    # SPLIT INTO SENTENCES
+    # SPLIT TEXT INTO SENTENCES
     # =========================================================
 
-    def split_sentences(self, text):
+    def split_sentences(
+        self,
+        text
+    ):
 
         sentences = re.split(
             r"(?<=[.!?])\s+",
@@ -877,10 +1122,57 @@ class TextToSpeechApp:
             if sentence.strip()
         ]
 
+        if not sentences and text:
+            sentences = [text]
+
         return sentences
 
     # =========================================================
-    # PLAY
+    # CREATE NEW ENGINE
+    # =========================================================
+
+    def create_engine(self):
+
+        engine = pyttsx3.init()
+
+        # Speed
+        engine.setProperty(
+            "rate",
+            self.speed_var.get()
+        )
+
+        # Volume
+        engine.setProperty(
+            "volume",
+            self.volume_var.get()
+        )
+
+        # Voice
+        voice_index = (
+            self.voice_combo.current()
+        )
+
+        if (
+            voice_index >= 0
+            and voice_index < len(self.voices)
+        ):
+
+            try:
+
+                engine.setProperty(
+                    "voice",
+                    self.voices[
+                        voice_index
+                    ].id
+                )
+
+            except Exception:
+                pass
+
+        return engine
+
+    # =========================================================
+    # PLAY FROM BEGINNING
     # =========================================================
 
     def play_text(self):
@@ -896,93 +1188,229 @@ class TextToSpeechApp:
 
             return
 
-        # Stop previous speech
-        try:
-            self.engine.stop()
-        except Exception:
-            pass
+        # Stop anything currently running
+        self.stop_requested = True
+        self.pause_requested = False
 
+        if self.current_engine:
+
+            try:
+                self.current_engine.stop()
+            except Exception:
+                pass
+
+        # New text
         self.current_text = text
 
-        self.sentences = self.split_sentences(
-            text
+        self.sentences = (
+            self.split_sentences(
+                text
+            )
         )
 
         self.current_sentence_index = 0
 
         self.stop_requested = False
+        self.pause_requested = False
         self.is_paused = False
 
-        thread = threading.Thread(
-            target=self.speak_from_current_sentence,
+        self.progress_var.set(
+            0
+        )
+
+        self.progress_text.set(
+            "Preparing speech..."
+        )
+
+        self.update_toggle_button(
+            "pause"
+        )
+
+        self.start_worker()
+
+    # =========================================================
+    # START SPEECH WORKER
+    # =========================================================
+
+    def start_worker(self):
+
+        if (
+            self.speech_thread
+            and self.speech_thread.is_alive()
+        ):
+
+            return
+
+        self.speech_thread = threading.Thread(
+            target=self.speak_worker,
             daemon=True
         )
 
-        thread.start()
+        self.speech_thread.start()
 
     # =========================================================
-    # SPEAK SENTENCES
+    # SPEECH WORKER
     # =========================================================
 
-    def speak_from_current_sentence(self):
+    def speak_worker(self):
+
+        self.is_speaking = True
 
         try:
 
-            self.is_speaking = True
-
-            self.configure_engine()
-
-            total = len(
-                self.sentences
-            )
-
             while (
-                self.current_sentence_index < total
-                and not self.stop_requested
-                and not self.is_paused
+                self.current_sentence_index
+                < len(self.sentences)
             ):
 
-                sentence = self.sentences[
-                    self.current_sentence_index
-                ]
-
-                self.update_status(
-                    f"Speaking sentence "
-                    f"{self.current_sentence_index + 1}"
-                    f" of {total}..."
-                )
-
-                self.engine.say(
-                    sentence
-                )
-
-                self.engine.runAndWait()
-
+                # Stop
                 if self.stop_requested:
                     break
 
-                if self.is_paused:
+                # Pause
+                if self.pause_requested:
                     break
 
+                index = (
+                    self.current_sentence_index
+                )
+
+                sentence = (
+                    self.sentences[index]
+                )
+
+                total = len(
+                    self.sentences
+                )
+
+                percentage = (
+                    index / total
+                ) * 100
+
+                self.update_progress(
+                    percentage,
+                    f"Speaking "
+                    f"{index + 1} of "
+                    f"{total}"
+                )
+
+                # -------------------------------------------------
+                # NEW ENGINE FOR EACH SENTENCE
+                # -------------------------------------------------
+
+                with self.engine_lock:
+
+                    if self.stop_requested:
+                        break
+
+                    if self.pause_requested:
+                        break
+
+                    engine = self.create_engine()
+
+                    self.current_engine = (
+                        engine
+                    )
+
+                    try:
+
+                        engine.say(
+                            sentence
+                        )
+
+                        engine.runAndWait()
+
+                    finally:
+
+                        try:
+                            engine.stop()
+                        except Exception:
+                            pass
+
+                        self.current_engine = None
+
+                # -------------------------------------------------
+                # IMPORTANT
+                #
+                # If pause happened, DON'T move to next sentence.
+                # Resume will repeat this interrupted sentence.
+                # -------------------------------------------------
+
+                if self.pause_requested:
+
+                    break
+
+                if self.stop_requested:
+
+                    break
+
+                # Sentence completed
                 self.current_sentence_index += 1
 
-            if (
-                self.current_sentence_index >= total
-                and not self.stop_requested
+            # =====================================================
+            # FINAL STATE
+            # =====================================================
+
+            if self.stop_requested:
+
+                self.update_status(
+                    "Stopped"
+                )
+
+                self.progress_text.set(
+                    "Playback stopped"
+                )
+
+                self.update_toggle_button(
+                    "pause"
+                )
+
+            elif self.pause_requested:
+
+                self.is_paused = True
+
+                self.update_status(
+                    "Paused"
+                )
+
+                self.progress_text.set(
+                    "Paused — press Resume to continue"
+                )
+
+                self.update_toggle_button(
+                    "resume"
+                )
+
+            elif (
+                self.current_sentence_index
+                >= len(self.sentences)
             ):
+
+                self.update_progress(
+                    100,
+                    "Finished"
+                )
 
                 self.update_status(
                     "Finished"
                 )
 
-                self.is_speaking = False
+                self.progress_text.set(
+                    "Speech completed"
+                )
+
+                self.update_toggle_button(
+                    "pause"
+                )
 
         except Exception as error:
 
-            self.is_speaking = False
-
             self.update_status(
                 "Speech error"
+            )
+
+            self.update_toggle_button(
+                "pause"
             )
 
             self.show_error(
@@ -992,72 +1420,104 @@ class TextToSpeechApp:
 
         finally:
 
-            if self.stop_requested:
-
-                self.is_speaking = False
+            self.is_speaking = False
 
     # =========================================================
-    # CONFIGURE ENGINE
+    # ONE PAUSE / RESUME BUTTON
     # =========================================================
 
-    def configure_engine(self):
+    def pause_or_resume(self):
 
-        self.engine.setProperty(
-            "rate",
-            self.speed_var.get()
-        )
+        # -----------------------------------------------------
+        # CURRENTLY SPEAKING
+        # -----------------------------------------------------
 
-        self.engine.setProperty(
-            "volume",
-            self.volume_var.get()
-        )
+        if self.is_speaking:
 
-        voice_index = self.voice_combo.current()
-
-        if (
-            voice_index >= 0
-            and voice_index < len(self.voices)
-        ):
-
-            self.engine.setProperty(
-                "voice",
-                self.voices[
-                    voice_index
-                ].id
-            )
-
-    # =========================================================
-    # PAUSE
-    # =========================================================
-
-    def pause_speech(self):
-
-        if not self.is_speaking:
+            self.pause_requested = True
 
             self.update_status(
-                "Nothing is currently speaking"
+                "Pausing..."
+            )
+
+            self.progress_text.set(
+                "Pausing speech..."
+            )
+
+            # Interrupt current engine
+            if self.current_engine:
+
+                try:
+
+                    self.current_engine.stop()
+
+                except Exception:
+                    pass
+
+            # Wait until worker is finished
+            self.wait_until_paused()
+
+            return
+
+        # -----------------------------------------------------
+        # CURRENTLY PAUSED
+        # -----------------------------------------------------
+
+        if self.is_paused:
+
+            self.resume_speech()
+
+            return
+
+        # -----------------------------------------------------
+        # NOTHING PLAYING
+        # -----------------------------------------------------
+
+        text = self.get_text()
+
+        if not text:
+
+            messagebox.showwarning(
+                "No Text",
+                "Please enter some text first."
             )
 
             return
 
-        try:
+        self.play_text()
 
-            self.is_paused = True
+    # =========================================================
+    # WAIT UNTIL PAUSED
+    # =========================================================
 
-            self.engine.stop()
+    def wait_until_paused(self):
 
-            self.is_speaking = False
+        if (
+            self.speech_thread
+            and self.speech_thread.is_alive()
+        ):
 
-            self.update_status(
-                "Paused"
+            self.root.after(
+                50,
+                self.wait_until_paused
             )
 
-        except Exception as error:
+            return
 
-            self.show_error(
-                "Pause Error",
-                str(error)
-            )
+        self.is_speaking = False
+        self.is_paused = True
+
+        self.update_status(
+            "Paused"
+        )
+
+        self.progress_text.set(
+            "Paused — press Resume to continue"
+        )
+
+        self.update_toggle_button(
+            "resume"
+        )
 
     # =========================================================
     # RESUME
@@ -1065,31 +1525,54 @@ class TextToSpeechApp:
 
     def resume_speech(self):
 
-        if not self.is_paused:
-
-            self.update_status(
-                "Speech is not paused"
-            )
-
-            return
-
         if not self.sentences:
 
-            self.update_status(
-                "No speech available to resume"
+            text = self.get_text()
+
+            if not text:
+                return
+
+            self.current_text = text
+
+            self.sentences = (
+                self.split_sentences(
+                    text
+                )
+            )
+
+            self.current_sentence_index = 0
+
+        # Make sure old thread is completely finished
+        if (
+            self.speech_thread
+            and self.speech_thread.is_alive()
+        ):
+
+            self.root.after(
+                100,
+                self.resume_speech
             )
 
             return
 
+        self.pause_requested = False
         self.stop_requested = False
         self.is_paused = False
+        self.is_speaking = False
 
-        thread = threading.Thread(
-            target=self.speak_from_current_sentence,
-            daemon=True
+        self.update_status(
+            "Resuming..."
         )
 
-        thread.start()
+        self.progress_text.set(
+            "Resuming speech..."
+        )
+
+        self.update_toggle_button(
+            "pause"
+        )
+
+        self.start_worker()
 
     # =========================================================
     # STOP
@@ -1097,28 +1580,103 @@ class TextToSpeechApp:
 
     def stop_speech(self):
 
+        self.stop_requested = True
+        self.pause_requested = False
+        self.is_paused = False
+
+        if self.current_engine:
+
+            try:
+
+                self.current_engine.stop()
+
+            except Exception:
+                pass
+
+        self.current_sentence_index = 0
+
+        self.is_speaking = False
+
+        self.progress_var.set(
+            0
+        )
+
+        self.progress_text.set(
+            "Playback stopped"
+        )
+
+        self.update_status(
+            "Stopped"
+        )
+
+        self.update_toggle_button(
+            "pause"
+        )
+
+    # =========================================================
+    # TOGGLE BUTTON
+    # =========================================================
+
+    def update_toggle_button(
+        self,
+        mode
+    ):
+
+        def update():
+
+            if mode == "resume":
+
+                self.pause_resume_button.config(
+                    text="▶  Resume",
+                    bg=self.GREEN
+                )
+
+            else:
+
+                self.pause_resume_button.config(
+                    text="Ⅱ  Pause",
+                    bg=self.ORANGE
+                )
+
         try:
 
-            self.stop_requested = True
-
-            self.is_paused = False
-
-            self.is_speaking = False
-
-            self.engine.stop()
-
-            self.current_sentence_index = 0
-
-            self.update_status(
-                "Stopped"
+            self.root.after(
+                0,
+                update
             )
 
-        except Exception as error:
+        except tk.TclError:
+            pass
 
-            self.show_error(
-                "Stop Error",
-                str(error)
+    # =========================================================
+    # PROGRESS
+    # =========================================================
+
+    def update_progress(
+        self,
+        value,
+        text
+    ):
+
+        def update():
+
+            self.progress_var.set(
+                value
             )
+
+            self.progress_text.set(
+                text
+            )
+
+        try:
+
+            self.root.after(
+                0,
+                update
+            )
+
+        except tk.TclError:
+            pass
 
     # =========================================================
     # SAVE AUDIO
@@ -1132,13 +1690,30 @@ class TextToSpeechApp:
 
             messagebox.showwarning(
                 "No Text",
-                "Please enter some text before saving."
+                "Please enter text before saving."
+            )
+
+            return
+
+        # Don't save while playing
+        if (
+            self.is_speaking
+            or (
+                self.speech_thread
+                and self.speech_thread.is_alive()
+            )
+        ):
+
+            messagebox.showwarning(
+                "Speech In Progress",
+                "Please stop or finish the current speech "
+                "before saving audio."
             )
 
             return
 
         filename = filedialog.asksaveasfilename(
-            title="Save Speech Audio",
+            title="Save Audio",
             initialdir=self.output_folder,
             initialfile="speech.wav",
             defaultextension=".wav",
@@ -1151,40 +1726,24 @@ class TextToSpeechApp:
         )
 
         if not filename:
-
             return
 
-        try:
+        thread = threading.Thread(
+            target=self.save_audio_worker,
+            args=(
+                text,
+                filename
+            ),
+            daemon=True
+        )
 
-            self.configure_engine()
-
-            self.update_status(
-                "Creating audio file..."
-            )
-
-            thread = threading.Thread(
-                target=self.save_audio_thread,
-                args=(
-                    text,
-                    filename
-                ),
-                daemon=True
-            )
-
-            thread.start()
-
-        except Exception as error:
-
-            self.show_error(
-                "Save Error",
-                str(error)
-            )
+        thread.start()
 
     # =========================================================
-    # SAVE AUDIO THREAD
+    # SAVE AUDIO WORKER
     # =========================================================
 
-    def save_audio_thread(
+    def save_audio_worker(
         self,
         text,
         filename
@@ -1192,12 +1751,23 @@ class TextToSpeechApp:
 
         try:
 
-            self.engine.save_to_file(
+            self.update_status(
+                "Creating audio..."
+            )
+
+            engine = self.create_engine()
+
+            engine.save_to_file(
                 text,
                 filename
             )
 
-            self.engine.runAndWait()
+            engine.runAndWait()
+
+            try:
+                engine.stop()
+            except Exception:
+                pass
 
             self.update_status(
                 "Audio saved successfully"
@@ -1207,7 +1777,7 @@ class TextToSpeechApp:
                 0,
                 lambda: messagebox.showinfo(
                     "Audio Saved",
-                    "Audio saved successfully!\n\n"
+                    "Your audio file was saved successfully.\n\n"
                     + filename
                 )
             )
@@ -1229,9 +1799,7 @@ class TextToSpeechApp:
 
     def clear_text(self):
 
-        if self.is_speaking:
-
-            self.stop_speech()
+        self.stop_speech()
 
         self.text_box.delete(
             "1.0",
@@ -1244,82 +1812,24 @@ class TextToSpeechApp:
 
         self.current_sentence_index = 0
 
-        self.update_count()
+        self.counter_var.set(
+            "0 characters  •  0 words"
+        )
+
+        self.progress_var.set(
+            0
+        )
+
+        self.progress_text.set(
+            "Ready to speak"
+        )
 
         self.update_status(
             "Ready"
         )
 
     # =========================================================
-    # COUNT
-    # =========================================================
-
-    def update_count(
-        self,
-        event=None
-    ):
-
-        text = self.get_text()
-
-        characters = len(
-            text
-        )
-
-        words = len(
-            text.split()
-        )
-
-        self.count_var.set(
-            f"{characters} characters | "
-            f"{words} words"
-        )
-
-    # =========================================================
-    # STATUS
-    # =========================================================
-
-    def update_status(
-        self,
-        message
-    ):
-
-        try:
-
-            self.root.after(
-                0,
-                lambda: self.status_var.set(
-                    message
-                )
-            )
-
-        except tk.TclError:
-            pass
-
-    # =========================================================
-    # SHOW ERROR
-    # =========================================================
-
-    def show_error(
-        self,
-        title,
-        message
-    ):
-
-        try:
-
-            self.root.after(
-                0,
-                lambda: messagebox.showerror(
-                    title,
-                    message
-                )
-            )
-
-        except tk.TclError:
-            pass
-
-    # =========================================================
-    # OPEN OUTPUT FOLDER
+    # OUTPUT FOLDER
     # =========================================================
 
     def open_output_folder(self):
@@ -1365,25 +1875,72 @@ class TextToSpeechApp:
             )
 
     # =========================================================
-    # CLOSE APP
+    # STATUS
+    # =========================================================
+
+    def update_status(
+        self,
+        message
+    ):
+
+        try:
+
+            self.root.after(
+                0,
+                lambda: self.status_var.set(
+                    message
+                )
+            )
+
+        except tk.TclError:
+            pass
+
+    # =========================================================
+    # ERROR
+    # =========================================================
+
+    def show_error(
+        self,
+        title,
+        message
+    ):
+
+        try:
+
+            self.root.after(
+                0,
+                lambda: messagebox.showerror(
+                    title,
+                    message
+                )
+            )
+
+        except tk.TclError:
+            pass
+
+    # =========================================================
+    # CLOSE
     # =========================================================
 
     def close_app(self):
 
-        try:
+        self.stop_requested = True
+        self.pause_requested = False
 
-            self.stop_requested = True
+        if self.current_engine:
 
-            self.engine.stop()
+            try:
 
-        except Exception:
-            pass
+                self.current_engine.stop()
+
+            except Exception:
+                pass
 
         self.root.destroy()
 
 
 # =============================================================
-# START APPLICATION
+# APPLICATION START
 # =============================================================
 
 if __name__ == "__main__":
